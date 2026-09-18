@@ -1,0 +1,29 @@
+{
+  "id": "1",
+  "title": "Основы Python",
+  "description": "Тест на знание синтаксиса Python",
+  "subject": "python",
+  "questions": [
+    {
+      "id": "q1",
+      "type": "expressionBuilder",
+      "questionText": "Соберите определение функции сложения двух чисел",
+      "template": "def {{name}}({{param1}}, {{param2}}):\n    return {{param1}} {{op}} {{param2}}",
+      "placeholders": [
+        {"id": "name", "expectedType": "identifier", "expected": "add"},
+        {"id": "param1", "expectedType": "identifier", "expected": "a"},
+        {"id": "param2", "expectedType": "identifier", "expected": "b"},
+        {"id": "op", "expectedType": "operator", "expected": "+"}
+      ],
+      "availableItems": [
+        {"id": "k1", "content": "def", "category": "keyword"},
+        {"id": "i1", "content": "add", "category": "identifier"},
+        {"id": "i2", "content": "sum", "category": "identifier"},
+        {"id": "i3", "content": "a", "category": "identifier"},
+        {"id": "i4", "content": "b", "category": "identifier"},
+        {"id": "o1", "content": "+", "category": "operator"},
+        {"id": "o2", "content": "-", "category": "operator"}
+      ]
+    }
+  ]
+}

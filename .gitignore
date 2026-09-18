@@ -1,0 +1,49 @@
+# Зависимости
+node_modules
+.pnp/
+.pnp.js
+
+# Сборка
+dist
+build/
+.next/
+.out/
+
+# Переменные окружения
+.env
+.env.local
+.env.*.local
+server/.env
+
+# Логи
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Кэш
+.cache/
+.vite/
+.turbo/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Тесты
+coverage/
+.nyc_output/
+
+# Другое
+*.tmp
+*.temp
+node_modules
+
+.env.development
+
+.env.production

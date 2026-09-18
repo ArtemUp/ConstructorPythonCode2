@@ -1,0 +1,44 @@
+{
+  "id": "math_integrals",
+  "title": "Интегралы",
+  "description": "Сборка определённого интеграла",
+  "subject": "math",
+  "timeLimit": 10,
+  "questions": [
+    {
+      "id": "q1",
+      "type": "expressionBuilder",
+      "questionText": "Соберите определённый интеграл от a до b функции f(x) dx",
+      "template": "\\int_{ {{a}} }^{ {{b}} } {{f}} \\, d{{x}}",
+      "placeholders": [
+        { "id": "a", "expectedType": "symbol", "expected": "a" },
+        { "id": "b", "expectedType": "symbol", "expected": "b" },
+        { "id": "f", "expectedType": "function", "expected": "f(x)" },
+        { "id": "x", "expectedType": "variable", "expected": "x" }
+      ],
+      "availableItems": [
+        { "id": "s1", "content": "a", "category": "symbol" },
+        { "id": "s2", "content": "b", "category": "symbol" },
+        { "id": "s3", "content": "c", "category": "symbol" },
+        { "id": "f1", "content": "f(x)", "category": "function" },
+        { "id": "f2", "content": "g(x)", "category": "function" },
+        { "id": "v1", "content": "x", "category": "variable" },
+        { "id": "v2", "content": "y", "category": "variable" }
+      ]
+    },
+    {
+      "id": "q2",
+      "type": "single",
+      "questionText": "Чему равен интеграл от 2x dx?",
+      "options": ["x² + C", "2x² + C", "x²/2 + C", "2 + C"],
+      "correctAnswers": ["x² + C"]
+    },
+    {
+      "id": "q3",
+      "type": "multiple",
+      "questionText": "Какие из функций являются чётными?",
+      "options": ["cos(x)", "sin(x)", "x²", "x³"],
+      "correctAnswers": ["cos(x)", "x²"]
+    }
+  ]
+}

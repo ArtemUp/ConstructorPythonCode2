@@ -1,0 +1,21 @@
+pre code.hljs {
+  background: #282a36;
+  color: #f8f8f2;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.hljs-keyword { color: #ff79c6; font-weight: bold; }
+.hljs-operator { color: #ff79c6; }
+.hljs-string { color: #f1fa8c; }
+.hljs-number { color: #bd93f9; }
+.hljs-title { color: #50fa7b; }
+.hljs-variable { color: #f8f8f2; }
+.hljs-params { color: #f8f8f2; font-style: italic; }
+.hljs-punctuation { color: #f8f8f2; }
+.hljs-comment { color: #6272a4; font-style: italic; }
+.hljs-built_in { color: #8be9fd; }
+.hljs-literal { color: #ffb86c; }
+.hljs-attr { color: #50fa7b; }
+.hljs-type { color: #8be9fd; }

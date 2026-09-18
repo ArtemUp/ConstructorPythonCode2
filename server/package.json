@@ -1,0 +1,12 @@
+{
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "server": "nodemon index.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "express-rate-limit": "^8.7.0",
+    "jsonwebtoken": "^9.0.3"
+  }
+}

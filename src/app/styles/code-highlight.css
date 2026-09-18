@@ -1,0 +1,20 @@
+pre code.hljs,
+pre code.hljs * {
+  color: #f8f8f2 !important;
+  background-color: #282a36 !important;
+}
+
+/* потом зададим яркие цвета для классов, также с !important для надёжности */
+.hljs-keyword { color: #ff79c6 !important; font-weight: bold; }
+.hljs-operator { color: #ff79c6 !important; }
+.hljs-string { color: #f1fa8c !important; }
+.hljs-number { color: #bd93f9 !important; }
+.hljs-title { color: #50fa7b !important; }
+.hljs-variable { color: #f8f8f2 !important; }
+.hljs-params { color: #f8f8f2 !important; font-style: italic; }
+.hljs-punctuation { color: #f8f8f2 !important; }
+.hljs-comment { color: #6272a4 !important; font-style: italic; }
+.hljs-built_in { color: #8be9fd !important; }
+.hljs-literal { color: #ffb86c !important; }
+.hljs-attr { color: #50fa7b !important; }
+.hljs-type { color: #8be9fd !important; }
