@@ -259,18 +259,15 @@ const SUPERSCRIPT_CHARS = 'ᵃᵇᵈᵉᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛ�
 
 function normalizeSubSup(text) {
   let s = String(text || '');
-  // Заменяем каждый Unicode-символ под/надстрочный на "_"
   for (const ch of SUBSCRIPT_CHARS) {
     s = s.split(ch).join('_');
   }
   for (const ch of SUPERSCRIPT_CHARS) {
     s = s.split(ch).join('_');
   }
-  // Ловим markdown-стили: _x_, ~x~, ^x^
   s = s.replace(/_([а-яёa-z])_/gi, '_');
   s = s.replace(/~([а-яёa-z])~/gi, '_');
   s = s.replace(/\^([а-яёa-z])\^/gi, '_');
-  // Убираем двойные подчёркивания
   s = s.replace(/__+/g, '_');
   return s;
 }
@@ -289,13 +286,10 @@ function normalizeStressFormat(testData) {
 
     const fixOpt = (opt) => {
       let s = String(opt || '').trim();
-      // "_Х_" → "Х"
       s = s.replace(/_([а-яё])_/gi, (m, letter) => letter.toUpperCase());
       s = s.replace(/_([А-ЯЁ])_/g, '$1');
-      // "_Х" → "Х"
       s = s.replace(/_([а-яё])/gi, (m, letter) => letter.toUpperCase());
       s = s.replace(/_/g, '');
-      // Убираем скобки
       s = s.replace(/[()]/g, '').trim();
       return s;
     };
@@ -400,6 +394,74 @@ function stripLatexFromPython(testData, isMath) {
   testData.questions = testData.questions.map(q => {
     if (q.questionText && /\$|\\[a-zA-Z]/.test(q.questionText)) {
       q.questionText = q.questionText.replace(/\$([^$]+)\$/g, '$1').replace(/\\[a-zA-Z]+/g, '').replace(/\s+/g, ' ').trim();
+    }
+    return q;
+  });
+  return testData;
+}
+
+// ============================================================
+// 🆕 Автоматическая обёртка LaTeX-фрагментов в $...$ (для математики)
+// ============================================================
+function hasLatexContent(text) {
+  return /\\[a-zA-Z]+/.test(text)
+      || /\b(sin|cos|tan|log|ln|sqrt|abs|lim)\s*\(/.test(text);
+}
+
+function autoWrapLatex(text) {
+  if (!text) return text;
+  let s = String(text);
+  if (!hasLatexContent(s)) return s;
+
+  // @@x@@ → маркер \u0001x\u0001
+  s = s.replace(/@@(\w+)@@/g, (_, n) => '\u0001' + n + '\u0001');
+
+  // Разбиваем по уже существующим $...$ — их не трогаем
+  const segs = s.split(/(\$[^$]+\$)/g);
+
+  const result = segs.map(seg => {
+    if (seg.startsWith('$') && seg.endsWith('$') && seg.length > 2) return seg;
+    if (!hasLatexContent(seg)) return seg;
+
+    // Режем сегмент по кириллице: она отделяет естественный текст от математики
+    const parts = [];
+    let lastIdx = 0;
+    const cyrRegex = /[\u0400-\u04FF]+/g;
+    let m;
+    while ((m = cyrRegex.exec(seg)) !== null) {
+      if (m.index > lastIdx) parts.push({ math: true, text: seg.slice(lastIdx, m.index) });
+      parts.push({ math: false, text: m[0] });
+      lastIdx = m.index + m[0].length;
+    }
+    if (lastIdx < seg.length) parts.push({ math: true, text: seg.slice(lastIdx) });
+
+    return parts.map(p => {
+      if (!p.math) return p.text;
+      if (!hasLatexContent(p.text)) return p.text;
+      const trimmed = p.text.trim();
+      const lead = p.text.match(/^\s*/)[0];
+      const trail = p.text.match(/\s*$/)[0];
+      // Внутри формулы маркер @@x@@ разворачиваем в голый x (KaTeX сам сделает курсив)
+      const inner = trimmed.replace(/\u0001(\w+)\u0001/g, '$1');
+      return lead + '$' + inner + '$' + trail;
+    }).join('');
+  }).join('');
+
+  // Оставшиеся маркеры (вне формул) превращаем в $x$
+  s = result.replace(/\u0001(\w+)\u0001/g, (_, n) => '$' + n + '$');
+
+  return s;
+}
+
+function wrapLatexInTestData(testData, isMath) {
+  if (!isMath || !testData?.questions) return testData;
+  testData.questions = testData.questions.map(q => {
+    if (q.questionText) q.questionText = autoWrapLatex(q.questionText);
+    if (Array.isArray(q.options)) {
+      q.options = q.options.map(o => autoWrapLatex(o));
+    }
+    if (Array.isArray(q.correctAnswers)) {
+      q.correctAnswers = q.correctAnswers.map(c => autoWrapLatex(c));
     }
     return q;
   });
@@ -635,7 +697,6 @@ ${lines}`;
 // ВЕРИФИКАЦИЯ РУССКОГО (со смарт-выбором модели)
 // ============================================================
 async function verifyRussian(toVerify, questions, API_KEY, FOLDER_ID) {
-  // Определяем сложность: для простых тем используем Lite
   const qTexts = toVerify.map(({ q }) => q.questionText || '').join(' ');
   const russianType = detectRussianType(qTexts);
   const simpleTypes = ['stress', 'orthography'];
@@ -896,7 +957,8 @@ ${isMath ? `
 - expectedType/category: number, symbol, function, variable, operator.
 - id: буквенные (a, b, ans, x1). НЕ "1", НЕ "id".
 - Плейсхолдеры: @@<id>@@.
-- Формулы в $...$; слэши удваивай.
+- КАЖДУЮ формулу (даже короткую типа "2 + 2", "sin(x)", "π/2") оборачивай в $...$: "Найдите $a \\cdot \\sin(b) + c$ при $a = 2$".
+- Слэши удваивай.
 - ГЛАВНОЕ: в questionText — ЗАДАЧА, в template — ОТВЕТ/РЕШЕНИЕ. expected НЕ должны быть в questionText.
 - correctAnswers пересчитай дважды.
 ` : `
@@ -1010,6 +1072,7 @@ router.post('/generate-test', async (req, res) => {
     d = unifyPlaceholders(d, isMath);
     d = normalizePlaceholderIds(d);
     d = stripLatexFromPython(d, isMath);
+    d = wrapLatexInTestData(d, isMath);  // 🆕 авто-обёртка LaTeX в $...$
     return d;
   };
 
