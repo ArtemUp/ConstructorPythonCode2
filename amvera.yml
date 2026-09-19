@@ -1,0 +1,13 @@
+meta:
+  environment: node
+  toolchain:
+    name: npm
+    version: 18
+
+build:
+  # Устанавливаем все зависимости, затем собираем фронтенд
+  additionalCommands: npm install && npm run build
+
+run:
+  # Запускаем наш сервер, который раздаёт API и статику
+  scriptName: server/index.js
