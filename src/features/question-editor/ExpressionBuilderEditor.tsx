@@ -4,6 +4,7 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { MathSymbolPalette } from './MathSymbolPalette';
 import { CodeSnippetPalette } from './CodeSnippetPalette';
+import { MathText } from '@shared/ui/MathText'; // добавьте в начало файла
 
 type Subject = 'python' | 'math';
 
@@ -123,25 +124,21 @@ export const ExpressionBuilderEditor: React.FC<ExpressionBuilderEditorProps> = (
   };
 
   // === Live-превью шаблона ===
-  const previewHtml = useMemo(() => {
+  const previewText = useMemo(() => {
     if (!template.trim()) return '';
-    let preview = template
-        .replace(/{{(\w+)}}/g, '[ $1 ]')    // Python
-        .replace(/@@(\w+)@@/g, '[ $1 ]');   // Математика
 
-    if (subject === 'math') {
-      try {
-        return katex.renderToString(preview, {
-          throwOnError: false,
-          displayMode: true,
-        });
-      } catch {
-        return preview;
-      }
+    // @@x@@ → $x$ — плейсхолдеры станут формулами внутри MathText
+    let s = template.replace(/@@(\w+)@@/g, '$$$1$$');
+
+    // Если русского текста нет и нет ни одного $ — оборачиваем всё в $...$,
+    // чтобы KaTeX отрендерил как единое математическое выражение.
+    const hasCyrillic = /[\u0400-\u04FF]/.test(s);
+    if (!hasCyrillic && !s.includes('$')) {
+      s = '$' + s + '$';
     }
-    // Для Python — просто текст
-    return null;
-  }, [template, subject]);
+
+    return s;
+  }, [template]);
 
   const handlePlaceholderChange = (id: string, patch: Partial<Placeholder>) => {
     onChange({
@@ -257,11 +254,10 @@ export const ExpressionBuilderEditor: React.FC<ExpressionBuilderEditorProps> = (
               Предпросмотр
             </div>
             <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg overflow-x-auto min-h-[50px] flex items-center justify-center">
-              {subject === 'math' && previewHtml ? (
-                <div
-                  className="text-center"
-                  dangerouslySetInnerHTML={{ __html: previewHtml }}
-                />
+              {subject === 'math' ? (
+                <div className="text-center">
+                  <MathText text={previewText} className="text-lg" />
+                </div>
               ) : (
                 <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap text-left w-full">
                   {template.replace(/{{(\w+)}}/g, '[ $1 ]')}

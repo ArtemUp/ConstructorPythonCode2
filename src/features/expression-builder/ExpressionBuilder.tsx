@@ -1,11 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { Item, Placeholder } from '@entities/test/types';
 import hljs from 'highlight.js';
-import katex from 'katex';
 import { Package, Wrench, X, CheckCircle2, AlertCircle, Hand } from 'lucide-react';
-import { cleanLatex } from '@/shared/lib/latex';
+import { MathText } from '@shared/ui/MathText';
 import '@/app/styles/custom-highlight.css';
-import 'katex/dist/katex.min.css';
 
 interface ExpressionBuilderProps {
   template: string;
@@ -47,17 +45,17 @@ export const ExpressionBuilder: React.FC<ExpressionBuilderProps> = ({
   // ИТОГОВОЕ ВЫРАЖЕНИЕ — поддерживает @@id@@ и {{id}}
   // ============================================================
   const builtCode = useMemo(() => {
-  let result = template;
-  placeholders.forEach(ph => {
-    const item = value[ph.id];
-    const content = item ? item.content : `[${ph.id}]`;
-    // {{id}} — Python
-    result = result.replace(new RegExp(`\\{\\{${ph.id}\\}\\}`, 'g'), content);
-    // @@id@@ — математика
-    result = result.replace(new RegExp(`@@${ph.id}@@`, 'g'), content);
-  });
-  return result;
-}, [template, value, placeholders]);
+    let result = template;
+    placeholders.forEach(ph => {
+      const item = value[ph.id];
+      const content = item ? item.content : `[${ph.id}]`;
+      // {{id}} — Python
+      result = result.replace(new RegExp(`\\{\\{${ph.id}\\}\\}`, 'g'), content);
+      // @@id@@ — математика
+      result = result.replace(new RegExp(`@@${ph.id}@@`, 'g'), content);
+    });
+    return result;
+  }, [template, value, placeholders]);
 
   // Подсветка Python
   const pythonHtml = useMemo(() => {
@@ -65,15 +63,22 @@ export const ExpressionBuilder: React.FC<ExpressionBuilderProps> = ({
     return hljs.highlight(builtCode, { language: 'python' }).value;
   }, [builtCode, isPython]);
 
-  // Рендер математики
-  const mathHtml = useMemo(() => {
+  // Рендер математики через MathText
+  const previewText = useMemo(() => {
     if (isPython) return '';
-    const latex = cleanLatex(builtCode);
-    try {
-      return katex.renderToString(latex, { throwOnError: false, displayMode: true });
-    } catch {
-      return builtCode;
+
+    let s = builtCode;
+
+    // Если есть кириллица — оставляем как есть, MathText сам разберётся
+    // (русский текст пойдёт как текст, математику он увидит через $...$)
+    const hasCyrillic = /[\u0400-\u04FF]/.test(s);
+    if (hasCyrillic) return s;
+
+    // Чистая математика — оборачиваем всё в $...$
+    if (!s.includes('$')) {
+      s = '$' + s + '$';
     }
+    return s;
   }, [builtCode, isPython]);
 
   // ============ DRAG & DROP (для десктопа) ============
@@ -239,9 +244,9 @@ export const ExpressionBuilder: React.FC<ExpressionBuilderProps> = ({
             </div>
           ) : (
             <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 min-h-[80px] flex items-center justify-center overflow-x-auto">
-              <div
-                className="text-center"
-                dangerouslySetInnerHTML={{ __html: mathHtml }}
+              <MathText
+                text={previewText}
+                className="text-center text-lg"
               />
             </div>
           )}

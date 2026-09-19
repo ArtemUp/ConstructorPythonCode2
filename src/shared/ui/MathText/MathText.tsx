@@ -1,7 +1,7 @@
 import React from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
-import { normalizeLatex, cleanLatex } from '@/shared/lib/latex';
+import { normalizeLatex } from '@/shared/lib/latex';
 
 interface MathTextProps {
   text: string;
@@ -22,24 +22,74 @@ function renderKatex(latex: string): string {
   }
 }
 
+/** Убирает непарные $ (если их нечётное количество — удаляет последний). */
+function removeStrayDollars(s: string): string {
+  const count = (s.match(/\$/g) || []).length;
+  if (count % 2 === 0) return s;
+  const idx = s.lastIndexOf('$');
+  return s.slice(0, idx) + s.slice(idx + 1);
+}
+
+/** Оборачивает "голый" LaTeX в $...$ внутри одного не-долларового куска. */
+function wrapBareInSegment(seg: string): string {
+  const parts: string[] = [];
+  let lastIdx = 0;
+  const cyrRegex = /[\u0400-\u04FF]+/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = cyrRegex.exec(seg)) !== null) {
+    parts.push(seg.slice(lastIdx, m.index));
+    parts.push(m[0]);
+    lastIdx = m.index + m[0].length;
+  }
+  parts.push(seg.slice(lastIdx));
+
+  return parts.map(p => {
+    if (/[\u0400-\u04FF]/.test(p)) return p;              // кириллица — не трогаем
+    if (!p.trim()) return p;                               // пробелы — не трогаем
+    if (!/\\[a-zA-Z]+/.test(p) && !/\b(sin|cos|tan|log|ln|sqrt|abs|lim)\s*\(/.test(p)) return p;
+
+    const lead = p.match(/^\s*/)![0];
+    const trail = p.match(/\s*$/)![0];
+    const core = p.trim();
+    return lead + '$' + core + '$' + trail;
+  }).join('');
+}
+
+/** Главная функция: сначала режем по $...$, потом внутри каждого куска — по кириллице. */
+function autoWrapLatexBare(s: string): string {
+  const dollarParts = s.split(/(\$[^$]+\$)/g);
+  return dollarParts.map(p => {
+    // Уже обёрнуто — не трогаем
+    if (p.startsWith('$') && p.endsWith('$') && p.length > 2) return p;
+    return wrapBareInSegment(p);
+  }).join('');
+}
+
 export const MathText: React.FC<MathTextProps> = ({ text, className = '' }) => {
   if (text === null || text === undefined) return null;
   let str = String(text);
   if (!str.trim()) return null;
 
-  // === НОВОЕ: @@a@@ → $a$, чтобы KaTeX отрендерил плейсхолдер как формулу ===
+  // 1. @@x@@ → $x$
   str = str.replace(/@@(\w+)@@/g, (_, name) => `$${name}$`);
-  // ========================================================================
 
-  // Нормализуем \$ и $$ → $
+  // 2. Нормализация \$ и $$
   str = str.replace(/\\\$/g, '$');
   str = str.replace(/\$\$/g, '$');
 
+  // 3. Убираем непарные $
+  str = removeStrayDollars(str);
+
+  // 4. Авто-обёртка голого LaTeX
+  str = autoWrapLatexBare(str);
+
+  // 5. Рендер
   if (str.includes('$')) {
-    const parts = str.split(/(\$[^$]+\$)/g);
+    const segs = str.split(/(\$[^$]+\$)/g);
     return (
       <span className={className}>
-        {parts.map((part, i) => {
+        {segs.map((part, i) => {
           if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
             const latex = part.slice(1, -1);
             return (

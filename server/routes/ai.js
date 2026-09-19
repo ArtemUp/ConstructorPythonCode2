@@ -165,22 +165,32 @@ function removeExpressionBuilderForRussian(testData, isRussian) {
 // ============================================================
 function normalizeTypes(testData) {
   if (!testData?.questions || !Array.isArray(testData.questions)) return testData;
+
+  const pick = (obj, keys, fallback = '') => {
+    for (const k of keys) {
+      if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') {
+        return String(obj[k]);
+      }
+    }
+    return fallback;
+  };
+
   testData.questions = testData.questions.map(q => {
     if (q.type === 'expressionBuilder') {
       if (Array.isArray(q.placeholders)) {
-        q.placeholders = q.placeholders.map(ph => ({
+        q.placeholders = q.placeholders.map((ph, i) => ({
           ...ph,
-          id: String(ph.id ?? ''),
-          expectedType: String(ph.expectedType ?? ''),
-          expected: String(ph.expected ?? ''),
+          id: pick(ph, ['id', 'name', 'key'], `p${i + 1}`),
+          expectedType: pick(ph, ['expectedType', 'type', 'category'], ''),
+          expected: pick(ph, ['expected', 'value', 'answer', 'correct'], ''),
         }));
       }
       if (Array.isArray(q.availableItems)) {
-        q.availableItems = q.availableItems.map(it => ({
+        q.availableItems = q.availableItems.map((it, i) => ({
           ...it,
-          id: String(it.id ?? ''),
-          content: String(it.content ?? ''),
-          category: String(it.category ?? ''),
+          id: pick(it, ['id', 'uid', 'key'], `item_${i + 1}`),
+          content: pick(it, ['content', 'text', 'value', 'label', 'title'], ''),
+          category: pick(it, ['category', 'type', 'kind'], ''),
         }));
       }
       if (q.template != null) q.template = String(q.template);
@@ -251,20 +261,13 @@ function cleanupOptions(testData) {
   return testData;
 }
 
-// ============================================================
-// 🆕 Unicode под/надстрочные символы → "_"
-// ============================================================
 const SUBSCRIPT_CHARS = 'ₐₑₒₓₔᵢᵤₕₖₗₘₙₚₛₜᵥ';
 const SUPERSCRIPT_CHARS = 'ᵃᵇᵈᵉᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ';
 
 function normalizeSubSup(text) {
   let s = String(text || '');
-  for (const ch of SUBSCRIPT_CHARS) {
-    s = s.split(ch).join('_');
-  }
-  for (const ch of SUPERSCRIPT_CHARS) {
-    s = s.split(ch).join('_');
-  }
+  for (const ch of SUBSCRIPT_CHARS) s = s.split(ch).join('_');
+  for (const ch of SUPERSCRIPT_CHARS) s = s.split(ch).join('_');
   s = s.replace(/_([а-яёa-z])_/gi, '_');
   s = s.replace(/~([а-яёa-z])~/gi, '_');
   s = s.replace(/\^([а-яёa-z])\^/gi, '_');
@@ -273,7 +276,7 @@ function normalizeSubSup(text) {
 }
 
 // ============================================================
-// 🆕 Нормализация формата ударения (заглавная буква)
+// Нормализация формата ударения
 // ============================================================
 function normalizeStressFormat(testData) {
   if (!testData?.questions) return testData;
@@ -286,11 +289,41 @@ function normalizeStressFormat(testData) {
 
     const fixOpt = (opt) => {
       let s = String(opt || '').trim();
-      s = s.replace(/_([а-яё])_/gi, (m, letter) => letter.toUpperCase());
-      s = s.replace(/_([А-ЯЁ])_/g, '$1');
-      s = s.replace(/_([а-яё])/gi, (m, letter) => letter.toUpperCase());
-      s = s.replace(/_/g, '');
+
+      // 1. **Х** → Х (markdown bold вокруг буквы)
+      s = s.replace(/\*\*([а-яёa-z])\*\*/gi, (_, letter) => letter.toUpperCase());
+
+      // 2. *Х* → Х (markdown italic)
+      s = s.replace(/\*([а-яёa-z])\*/gi, (_, letter) => letter.toUpperCase());
+
+      // 3. __Х__ → Х
+      s = s.replace(/__([а-яёa-z])__/gi, (_, letter) => letter.toUpperCase());
+
+      // 4. _Х_ → Х (одиночные подчёркивания)
+      s = s.replace(/_([а-яё])_/gi, (_, letter) => letter.toUpperCase());
+
+      // 5. `Х` → Х (backticks)
+      s = s.replace(/`([а-яёa-z])`/gi, (_, letter) => letter.toUpperCase());
+
+      // 6. Х́ (буква с комбинирующим акутом U+0301) → Х заглавная
+      s = s.replace(/([а-яёa-z])\u0301/gi, (_, letter) => letter.toUpperCase());
+
+      // 7. 'Х (апостроф перед буквой) → Х заглавная
+      s = s.replace(/'([а-яёa-z])/gi, (_, letter) => letter.toUpperCase());
+
+      // 8. Если заглавных вообще нет — ищем подсказки
+      const hasUpper = /[А-ЯЁ]/.test(s);
+      if (!hasUpper) {
+        // "ударение на X" уже в вопросе — не наш случай
+        // оставляем как есть
+      }
+
+      // 9. Убираем остатки звёздочек и подчёркиваний
+      s = s.replace(/\*+/g, '');
+      s = s.replace(/_+/g, '');
+      s = s.replace(/`/g, '');
       s = s.replace(/[()]/g, '').trim();
+
       return s;
     };
 
@@ -303,24 +336,18 @@ function normalizeStressFormat(testData) {
   return testData;
 }
 
-// ============================================================
-// 🆕 Нормализация формата орфографии (Unicode → "_")
-// ============================================================
 function normalizeOrthographyFormat(testData, isRussian) {
   if (!isRussian || !testData?.questions) return testData;
-
   testData.questions = testData.questions.map(q => {
     if (q.type !== 'single' && q.type !== 'multiple') return q;
     const qText = String(q.questionText || '').toLowerCase();
     const isOrthography = /пропуск|пишется|вставьте|вставь|букв[аеуыо]/i.test(qText)
       && !/ударени/i.test(qText);
     if (!isOrthography) return q;
-
     q.options = (q.options || []).map(o => normalizeSubSup(o));
     q.correctAnswers = (q.correctAnswers || []).map(o => normalizeSubSup(o));
     return q;
   });
-
   return testData;
 }
 
@@ -400,9 +427,6 @@ function stripLatexFromPython(testData, isMath) {
   return testData;
 }
 
-// ============================================================
-// 🆕 Автоматическая обёртка LaTeX-фрагментов в $...$ (для математики)
-// ============================================================
 function hasLatexContent(text) {
   return /\\[a-zA-Z]+/.test(text)
       || /\b(sin|cos|tan|log|ln|sqrt|abs|lim)\s*\(/.test(text);
@@ -413,17 +437,14 @@ function autoWrapLatex(text) {
   let s = String(text);
   if (!hasLatexContent(s)) return s;
 
-  // @@x@@ → маркер \u0001x\u0001
   s = s.replace(/@@(\w+)@@/g, (_, n) => '\u0001' + n + '\u0001');
 
-  // Разбиваем по уже существующим $...$ — их не трогаем
   const segs = s.split(/(\$[^$]+\$)/g);
 
   const result = segs.map(seg => {
     if (seg.startsWith('$') && seg.endsWith('$') && seg.length > 2) return seg;
     if (!hasLatexContent(seg)) return seg;
 
-    // Режем сегмент по кириллице: она отделяет естественный текст от математики
     const parts = [];
     let lastIdx = 0;
     const cyrRegex = /[\u0400-\u04FF]+/g;
@@ -441,15 +462,12 @@ function autoWrapLatex(text) {
       const trimmed = p.text.trim();
       const lead = p.text.match(/^\s*/)[0];
       const trail = p.text.match(/\s*$/)[0];
-      // Внутри формулы маркер @@x@@ разворачиваем в голый x (KaTeX сам сделает курсив)
       const inner = trimmed.replace(/\u0001(\w+)\u0001/g, '$1');
       return lead + '$' + inner + '$' + trail;
     }).join('');
   }).join('');
 
-  // Оставшиеся маркеры (вне формул) превращаем в $x$
   s = result.replace(/\u0001(\w+)\u0001/g, (_, n) => '$' + n + '$');
-
   return s;
 }
 
@@ -457,12 +475,8 @@ function wrapLatexInTestData(testData, isMath) {
   if (!isMath || !testData?.questions) return testData;
   testData.questions = testData.questions.map(q => {
     if (q.questionText) q.questionText = autoWrapLatex(q.questionText);
-    if (Array.isArray(q.options)) {
-      q.options = q.options.map(o => autoWrapLatex(o));
-    }
-    if (Array.isArray(q.correctAnswers)) {
-      q.correctAnswers = q.correctAnswers.map(c => autoWrapLatex(c));
-    }
+    if (Array.isArray(q.options)) q.options = q.options.map(o => autoWrapLatex(o));
+    if (Array.isArray(q.correctAnswers)) q.correctAnswers = q.correctAnswers.map(c => autoWrapLatex(c));
     return q;
   });
   return testData;
@@ -498,6 +512,11 @@ function validateTestData(testData, isMath, isRussian = false) {
           critical.push(`Q${idx + 1}: ссылка на визуальное выделение — в UI его нет.`);
         }
 
+        // 🆕 Плохая формулировка "ударение на N-й слог" — AI постоянно ошибается
+        if (/ударени[ея]\s+на\s+(перв|втор|трет|четв|пят|шест|седьм|восьм|девят|десят|последн)/i.test(qLower)) {
+          critical.push(`Q${idx + 1}: формулировка "ударение на N-й слог" ненадёжна — используйте "В каком слове верно выделена буква, обозначающая ударный гласный звук?".`);
+        }
+
         const isOrthography = /пропуск|букв[аеуыо]|пишется|вставьте|вставь/i.test(qLower)
           && !/ударени/i.test(qLower);
         if (isOrthography) {
@@ -521,11 +540,13 @@ function validateTestData(testData, isMath, isRussian = false) {
           const opts = q.options || [];
           const badFormat = opts.some(o => {
             const s = String(o || '');
+            // 🆕 остались звёздочки/подчёркивания → не убрались
+            if (/\*|_|`/.test(s)) return true;
             const upperCount = (s.match(/[А-ЯЁ]/g) || []).length;
             return upperCount !== 1;
           });
           if (badFormat) {
-            critical.push(`Q${idx + 1}: в каждом варианте должна быть РОВНО ОДНА заглавная буква.`);
+            critical.push(`Q${idx + 1}: в каждом варианте должна быть РОВНО ОДНА заглавная буква, без звёздочек/подчёркиваний.`);
           }
         }
 
@@ -561,22 +582,71 @@ function validateTestData(testData, isMath, isRussian = false) {
     const phs = q.placeholders || [];
     const items = q.availableItems || [];
 
-    phs.forEach(ph => {
-      if (!items.some(it => it.content === ph.expected)) {
-        critical.push(`Q${idx + 1}: нет элемента "${ph.expected}".`);
+    if (phs.length === 0) {
+      critical.push(`Q${idx + 1}: нет плейсхолдеров (placeholders пустой).`);
+    }
+
+    phs.forEach((ph, pi) => {
+      if (!ph.id || String(ph.id).trim() === '') {
+        critical.push(`Q${idx + 1}: у плейсхолдера #${pi + 1} нет id.`);
+      }
+      if (!ph.expected || String(ph.expected).trim() === '') {
+        critical.push(`Q${idx + 1}: у плейсхолдера "${ph.id || pi + 1}" не указан expected.`);
       }
     });
+
+    phs.forEach(ph => {
+      if (ph.expected && !items.some(it => it.content === ph.expected)) {
+        critical.push(`Q${idx + 1}: нет элемента "${ph.expected}" в корзине.`);
+      }
+    });
+
+    if (phs.length > 0 && items.length === 0) {
+      critical.push(`Q${idx + 1}: пустая корзина (availableItems).`);
+    }
+
+    const emptyItems = items.filter(it => !it.content || String(it.content).trim() === '');
+    if (emptyItems.length > 0) {
+      critical.push(`Q${idx + 1}: ${emptyItems.length} элемент(ов) в корзине без content.`);
+    }
 
     if (!q.template || !String(q.template).trim()) {
       critical.push(`Q${idx + 1}: пустой шаблон.`);
     }
 
-    if (q.template) {
+    if (q.template && phs.length > 0) {
       const missing = phs.filter(ph =>
         !q.template.includes(`@@${ph.id}@@`) && !q.template.includes(`{{${ph.id}}}`)
       );
       if (missing.length > 0) {
         critical.push(`Q${idx + 1}: в шаблоне нет: ${missing.map(p => p.id).join(', ')}.`);
+      }
+    }
+
+    if (q.template && !/@@\w+@@/.test(q.template) && !/\{\{\w+\}\}/.test(q.template)) {
+      critical.push(`Q${idx + 1}: в шаблоне нет ни одного @@плейсхолдера@@ — уже подставлены значения.`);
+    }
+
+    if (isMath && q.questionText) {
+      const qText = String(q.questionText);
+      const hasDigitsInQuestion = /\d/.test(qText);
+      const numericExpected = phs
+        .map(p => String(p.expected).trim())
+        .filter(v => /^\d+(\.\d+)?$/.test(v));
+      if (!hasDigitsInQuestion && numericExpected.length > 0) {
+        critical.push(`Q${idx + 1}: в тексте задачи нет числовых данных (a, b, c не заданы) — задача нерешаема.`);
+      }
+    }
+
+    if (isMath && phs.length > 0) {
+      const qText = String(q.questionText || '');
+      const allVarsAsExpected = phs.every(ph => {
+        const exp = String(ph.expected || '').trim();
+        return /^[a-zA-Z]$/.test(exp) && qText.includes(exp);
+      });
+      const hasDigitsInAvailable = items.some(it => /^\d/.test(String(it.content || '')));
+      if (allVarsAsExpected && !hasDigitsInAvailable) {
+        critical.push(`Q${idx + 1}: в плейсхолдеры подставлены буквенные переменные вместо числовых значений.`);
       }
     }
 
@@ -595,7 +665,7 @@ function validateTestData(testData, isMath, isRussian = false) {
     }
 
     const minItems = phs.length <= 1 ? 3 : Math.max(phs.length * 2, phs.length + 3);
-    if (items.length < minItems) {
+    if (phs.length > 0 && items.length < minItems) {
       cosmetic.push(`Q${idx + 1}: элементов ${items.length}, желательно ≥${minItems}.`);
     }
   });
@@ -693,9 +763,6 @@ ${lines}`;
   }
 }
 
-// ============================================================
-// ВЕРИФИКАЦИЯ РУССКОГО (со смарт-выбором модели)
-// ============================================================
 async function verifyRussian(toVerify, questions, API_KEY, FOLDER_ID) {
   const qTexts = toVerify.map(({ q }) => q.questionText || '').join(' ');
   const russianType = detectRussianType(qTexts);
@@ -774,15 +841,57 @@ ${blindLines}`;
 function buildRussianSystemMessage() {
   return `Ты — методист ЕГЭ/ОГЭ по русскому языку. Составляешь тесты по реальным КИМ.
 
+🔴🔴🔴 ГЛАВНОЕ ПРАВИЛО ДЛЯ ЗАДАНИЙ НА УДАРЕНИЕ 🔴🔴🔴
+
+Формулировка ВСЕГДА одна и та же:
+  "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
+
+🚫 КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ формулировки:
+  - "Укажите слово с ударением на первый слог"
+  - "Укажите слово с ударением на второй слог"
+  - "Укажите слово, в котором ударение падает на..."
+  - любые формулировки с указанием НОМЕРА слога
+  
+Причина: AI путает слоги и порождает 4 слова, среди которых НЕТ правильного. Такие задания нерешаемы.
+
+✅ Разрешена ТОЛЬКО формулировка:
+  "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
+
+ФОРМАТ вариантов:
+  - РОВНО ОДНА заглавная буква в слове (та, на которую падает ударение).
+  - БЕЗ звёздочек (**), БЕЗ подчёркиваний (_), БЕЗ кавычек и бэктиков.
+  - 3 варианта с НЕПРАВИЛЬНЫМ ударением + 1 вариант с ПРАВИЛЬНЫМ.
+
+✅ ПРАВИЛЬНО:
+  "options": ["алфАвит", "алфавИт", "Алфавит", "алфавитА"]
+  "correctAnswers": ["алфавИт"]
+  (Ударение в слове "алфавит" — на последний слог "и".)
+
+❌ НЕПРАВИЛЬНО:
+  "options": ["звон**И**т", "газопров**О**д", "обл**Е**гчить", "догов**О**р"]
+  ↑ Здесь звёздочки и все варианты с правильным ударением — нет ошибок.
+  
+❌ НЕПРАВИЛЬНО (плохая формулировка):
+  "questionText": "Укажите слово с ударением на первый слог"
+  "options": ["звонИт", "газопровОд", "облегчИть", "договОр"]
+  ↑ Ни одно из этих слов не имеет ударения на первый слог. Задание нерешаемо.
+
+🔴 СПИСОК слов для ударений (только эти, в них ударение однозначно):
+алфавИт, дефИс, квартАл, цемЕнт, ходАтайство, избалОванный, дОсуг,
+каталОг, нАчал, партЕр, портфЕль, свЁкла, срЕдства, тОрты, цепОчка,
+шофЁр, щавЕль, экспЕрт, звонИт, облегчИть, договОр, красИвее, звонИшь
+
+🚫 ЗАПРЕЩЕНЫ (спорные): творог, щавель, звонит (в прошлом), каталог (устар.), свёкла, красивее.
+
 🔴 ОБЩИЕ ЗАПРЕТЫ (нарушение = перегенерация):
 1. 🚫 НЕ ссылайся на визуальное выделение: "выделенное слово", "подчёркнутое".
-2. 🚫 НЕ используй спорные слова: творог, щавель, звонит, каталог, договор, свёкла, красивее.
+2. 🚫 НЕ используй спорные слова.
 3. 🚫 НЕ выдумывай несуществующие слова.
 4. Для single — РОВНО ОДИН правильный ответ.
 5. Для multiple — 2–4 правильных ответа.
 
 🔴 ФОРМАТ ОТВЕТОВ:
-- УДАРЕНИЕ: слово с ОДНОЙ заглавной буквой (алфавИт), БЕЗ подчёркиваний!
+- УДАРЕНИЕ: слово с ОДНОЙ заглавной буквой (алфавИт), БЕЗ подчёркиваний и звёздочек!
 - ОРФОГРАФИЯ: слово с "_" на месте пропуска (пр_шить).
 - ПАРОНИМЫ: предложение или словосочетание.
 - ПУНКТУАЦИЯ: полное предложение.
@@ -790,9 +899,6 @@ function buildRussianSystemMessage() {
 Тип вопроса: ТОЛЬКО single и multiple.`;
 }
 
-// ============================================================
-// USER PROMPT ДЛЯ РУССКОГО (сокращённый по типу)
-// ============================================================
 function buildRussianUserPrompt({ topic, finalCount, examBlock, seed, recentList, russianType }) {
   const commonHeader = `${seed ? `SEED: ${seed}.\n` : ''}Запрос: "${topic}"
 
@@ -809,22 +915,40 @@ ${recentList ? `НЕ повторяй: ${recentList}\n` : ''}${examBlock}
 `;
 
   const formats = {
-    stress: `ТИП ЗАДАНИЯ: УДАРЕНИЕ
+    stress: `ТИП ЗАДАНИЯ: УДАРЕНИЕ (орфоэпия)
 
-Формулировка: "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
+🔴 ФОРМУЛИРОВКА ВОПРОСА — ТОЛЬКО ТАКАЯ:
+  "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
 
-🔴 ФОРМАТ: слово с ОДНОЙ заглавной буквой, БЕЗ подчёркиваний!
+🚫 НЕ пиши "Укажите слово с ударением на первый/второй/третий слог". Так делать ЗАПРЕЩЕНО.
 
-✅ "алфавИт", "докумЕнт", "квартАл", "хОдатайство"
-❌ "алфав_И_т", "алфав(И)т"
+🔴 ФОРМАТ ОТВЕТОВ:
+- Слово с ОДНОЙ заглавной буквой (та, на которую падает ударение).
+- БЕЗ звёздочек (**), БЕЗ подчёркиваний (_), БЕЗ кавычек, БЕЗ бэктиков.
+- 3 варианта с НЕПРАВИЛЬНЫМ ударением + 1 с ПРАВИЛЬНЫМ.
 
-ЗАПРЕЩЕНЫ: творог, щавель, звонит, красивее.
-РАЗРЕШЕНЫ: алфавит, дефис, квартал, цемент, ходатайство, избалованный, досуг, каталог, начал, партер, портфель, свёкла, средства, торты, цепочка, шофёр, щавель, эксперт.
+✅ ХОРОШО:
+"questionText": "В каком слове верно выделена буква, обозначающая ударный гласный звук?",
+"options": ["алфАвит", "алфавИт", "Алфавит", "алфавитА"],
+"correctAnswers": ["алфавИт"]
+
+❌ ПЛОХО (звёздочки, все варианты правильные):
+"options": ["звон**И**т", "газопров**О**д", "обл**Е**гчить", "догов**О**р"]
+
+❌ ПЛОХО (формулировка про слог):
+"questionText": "Укажите слово с ударением на первый слог"
+
+🔴 ДОСТУПНЫЕ СЛОВА (используй ТОЛЬКО их):
+алфавИт, дефИс, квартАл, цемЕнт, ходАтайство, избалОванный, дОсуг,
+каталОг, нАчал, партЕр, портфЕль, свЁкла, срЕдства, тОрты, цепОчка,
+шофЁр, щавЕл, экспЕрт, звонИт, облегчИть, договОр, красИвее, позвонИшь
+
+🚫 ЗАПРЕЩЕНЫ (спорные): творог, щавель, звонит, красивее (есть спорные варианты).
 
 ПРИМЕР:
 "questionText": "В каком слове верно выделена буква, обозначающая ударный гласный звук?",
-"options": ["алфАвит", "алфавИт", "Алфавит", "алфавитА"],
-"correctAnswers": ["алфавИт"]`,
+"options": ["звОнит", "звонИт", "звонит", "звонИть"],
+"correctAnswers": ["звонИт"]`,
 
     orthography: `ТИП ЗАДАНИЯ: ОРФОГРАФИЯ
 
@@ -947,33 +1071,100 @@ ${formats[russianType] || formats.generic}
 }
 
 // ============================================================
-// SYSTEM/USER PROMPT ДЛЯ МАТЕМАТИКИ И PYTHON
+// SYSTEM MESSAGE ДЛЯ МАТЕМАТИКИ И PYTHON
 // ============================================================
 function buildSystemMessage(isMath) {
-  return `Ты — методист ЕГЭ/ОГЭ. Отвечай ТОЛЬКО JSON.
+  if (!isMath) {
+    return `Ты — методист ЕГЭ/ОГЭ по Python. Отвечай ТОЛЬКО JSON.
 
-${isMath ? `
-МАТЕМАТИКА:
-- expectedType/category: number, symbol, function, variable, operator.
-- id: буквенные (a, b, ans, x1). НЕ "1", НЕ "id".
-- Плейсхолдеры: @@<id>@@.
-- КАЖДУЮ формулу (даже короткую типа "2 + 2", "sin(x)", "π/2") оборачивай в $...$: "Найдите $a \\cdot \\sin(b) + c$ при $a = 2$".
-- Слэши удваивай.
-- ГЛАВНОЕ: в questionText — ЗАДАЧА, в template — ОТВЕТ/РЕШЕНИЕ. expected НЕ должны быть в questionText.
-- correctAnswers пересчитай дважды.
-` : `
 PYTHON:
 - expectedType/category: keyword, identifier, operator, separator, builtin.
 - Плейсхолдеры: {{id}}.
 - В questionText — БЕЗ $ и LaTeX, переносы через \\n.
 - Код оборачивай в \`\`\`python\\n...\\n\`\`\`.
-`}
+
+🚨 КРИТИЧНО ДЛЯ expressionBuilder:
+1. В template ОБЯЗАТЕЛЬНО должны быть маркеры {{<id>}} для КАЖДОГО плейсхолдера.
+2. В каждом placeholder поле "expected" ОБЯЗАТЕЛЬНО.
+3. В КАЖДОМ availableItem поле "content" ОБЯЗАТЕЛЬНО — без пустых.
+
+options — короткие. Все expected/options/content — СТРОКИ.`;
+  }
+
+  return `Ты — методист ЕГЭ/ОГЭ по математике. Отвечай ТОЛЬКО JSON.
+
+🔴🔴🔴 ГЛАВНОЕ ПРАВИЛО expressionBuilder 🔴🔴🔴
+
+Это задание типа "СОБЕРИ ФОРМУЛУ" — ученик перетаскивает элементы из корзины в плейсхолдеры.
+Ученик НЕ решает задачу с нуля, он СОБИРАЕТ ОТВЕТ.
+
+Поэтому:
+1. В questionText — ТОЛЬКО задача с ЧИСЛОВЫМИ данными. БЕЗ формулы-ответа!
+2. В template — ТОЛЬКО формула-ответ с @@плейсхолдерами@@ вместо значений.
+3. В placeholders[].expected — ЧИСЛО или ВЫРАЖЕНИЕ, которое должно стоять на месте этого плейсхолдера.
+4. В availableItems[].content — элементы для перетаскивания: ПРАВИЛЬНЫЕ + НЕВЕРНЫЕ (дистракторы).
+
+📛 СТРОГО ЗАПРЕЩЕНО:
+- Писать саму формулу-ответ в questionText.
+- Класть в availableItems[].content буквенные переменные (a, b, c, x) — только числа и операторы.
+- Класть в expected те же буквы, что уже есть в questionText.
+- Оставлять пустые availableItems.
+- Подставлять значения в template вместо @@плейсхолдеров@@.
+
+✅ ПРАВИЛЬНАЯ структура (пример — площадь треугольника по Герону, стороны 3, 4, 5):
+
+"questionText": "Найдите площадь треугольника со сторонами 3, 4 и 5 по формуле Герона. Ответ округлите до целого.",
+
+"template": "$S = \\sqrt{@@p@@(@@p@@ - @@a@@)(@@p@@ - @@b@@)(@@p@@ - @@c@@)}$",
+
+"placeholders": [
+  { "id": "a", "expectedType": "number", "expected": "3" },
+  { "id": "b", "expectedType": "number", "expected": "4" },
+  { "id": "c", "expectedType": "number", "expected": "5" },
+  { "id": "p", "expectedType": "number", "expected": "6" }
+],
+
+"availableItems": [
+  { "id": "i1", "content": "3", "category": "number" },
+  { "id": "i2", "content": "4", "category": "number" },
+  { "id": "i3", "content": "5", "category": "number" },
+  { "id": "i4", "content": "6", "category": "number" },
+  { "id": "i5", "content": "7", "category": "number" },
+  { "id": "i6", "content": "12", "category": "number" }
+]
+
+❌ ТАК ДЕЛАТЬ НЕЛЬЗЯ (ошибка, за которую перегенерируем):
+
+"questionText": "Найдите площадь треугольника со сторонами a, b и c, используя формулу Герона: S = \\sqrt{p(p-a)(p-b)(p-c)}",
+"template": "$S = \\sqrt{@@p@@(@@p@@ - @@a@@)...}$",
+"placeholders": [{"id":"a","expected":"a"}, {"id":"b","expected":"b"}, ...],
+"availableItems": [{"content":"a"}, {"content":"b"}, ...]
+
+↑ Здесь в questionText уже есть формула-ответ, а в expected — буквы вместо чисел. Это брак.
+
+🔴 ДРУГИЕ ПРАВИЛА:
+- expectedType/category: number, symbol, function, variable, operator.
+- id: буквенные (a, b, ans, x1). НЕ "1", НЕ "id".
+- КАЖДУЮ формулу оборачивай в ОДИНАРНЫЕ $...$ (НЕ $$...$$).
+- Слэши удваивай.
+- correctAnswers пересчитай дважды.
+
+ФОРМАТ:
+
+{
+  "title": "...", "description": "...", "subject": "math", "timeLimit": 15,
+  "questions": [
+    { "type": "expressionBuilder", "questionText": "задача с числами", "template": "$...@@id@@...$", "placeholders": [...], "availableItems": [...] },
+    { "type": "single", "questionText": "...", "options": [...], "correctAnswers": ["..."] },
+    { "type": "multiple", "questionText": "...", "options": [...], "correctAnswers": ["...", "..."] }
+  ]
+}
 
 options — короткие. Все expected/options/content — СТРОКИ.`;
 }
 
 function buildUserPrompt({ topic, subjectField, subjectName, isMath, finalCount, examBlock, seed, recentList }) {
-  const mathTemplate = 'шаблон с @@<id>@@';
+  const mathTemplate = 'формула-ответ с @@<id>@@';
   const pyTemplate = 'шаблон с {{<id>}}';
   return `${seed ? `SEED: ${seed}.\n` : ''}Запрос: "${topic}"
 
@@ -983,12 +1174,26 @@ ${finalCount} вопросов по ${subjectName}.
 Типы: expressionBuilder ≥1, single ≥1, multiple ≥1.
 
 ${isMath ? `
-ID плейсхолдеров: буквенные. Шаблон: @@<id>@@.
-ГЛАВНОЕ: в questionText — задача, в template — ответ. expected НЕ в questionText.
-Элементов: 1 плейсхолдер → 3+, 2 → 4+, 3 → 6+, 4 → 8+.
+🔴 КРИТИЧНО ДЛЯ expressionBuilder:
+- questionText: ТОЛЬКО задача с конкретными ЧИСЛАМИ (3, 4, 5). НЕ пиши формулу-ответ в тексте!
+- template: формула-ОТВЕТ с @@плейсхолдерами@@ вместо значений.
+- placeholders[].expected: ЧИСЛА (3, 4, 5, 6), НЕ буквы!
+- availableItems[].content: числа и операторы (правильные + дистракторы).
+
+Если expected содержит буквы a, b, c, x — это ОШИБКА. Заменяй на числа.
+
+Элементов: 3 плейсхолдера → 6+, 4 → 8+.
 Категории: number, symbol, function, variable, operator.
+
+Пример правильного:
+questionText: "Найдите площадь треугольника со сторонами 3, 4 и 5 по формуле Герона."
+template: "$S = \\sqrt{@@p@@(@@p@@ - @@a@@)(@@p@@ - @@b@@)(@@p@@ - @@c@@)}$"
+placeholders: [{"id":"a","expected":"3"}, {"id":"b","expected":"4"}, {"id":"c","expected":"5"}, {"id":"p","expected":"6"}]
+availableItems: [{"content":"3"},{"content":"4"},{"content":"5"},{"content":"6"},{"content":"7"},{"content":"8"},{"content":"10"},{"content":"12"}]
 ` : `
 Плейсхолдеры: {{id}}.
+Обязательно: у каждого плейсхолдера есть "expected".
+Обязательно: у каждого availableItem есть "content".
 Элементов: 1 → 3+, 2 → 4+, 3 → 6+, 4 → 8+.
 Категории: keyword, identifier, operator, separator, builtin.
 `}
@@ -1072,7 +1277,7 @@ router.post('/generate-test', async (req, res) => {
     d = unifyPlaceholders(d, isMath);
     d = normalizePlaceholderIds(d);
     d = stripLatexFromPython(d, isMath);
-    d = wrapLatexInTestData(d, isMath);  // 🆕 авто-обёртка LaTeX в $...$
+    d = wrapLatexInTestData(d, isMath);
     return d;
   };
 
@@ -1111,10 +1316,26 @@ router.post('/generate-test', async (req, res) => {
 
       const retryPrompt = `${userPrompt}
 
-❌ ОШИБКИ:
+❌ ОШИБКИ ПРЕДЫДУЩЕЙ ГЕНЕРАЦИИ:
 ${critical.map(i => '- ' + i).join('\n')}
 
-ИСПРАВЬ и верни снова JSON.`;
+🔴 ИСПРАВЬ и верни снова JSON.
+
+ДЛЯ УДАРЕНИЙ:
+- Формулировка ТОЛЬКО "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
+- В options РОВНО ОДНА заглавная буква на слово.
+- БЕЗ звёздочек (**), БЕЗ подчёркиваний (_).
+- 3 неправильных + 1 правильный вариант.
+
+ДЛЯ expressionBuilder (математика):
+- questionText: ТОЛЬКО задача с конкретными ЧИСЛАМИ.
+- template: формула-ОТВЕТ с @@плейсхолдерами@@.
+- placeholders[].expected: ЧИСЛА, НЕ буквы!
+
+Пример для ударений:
+"questionText": "В каком слове верно выделена буква, обозначающая ударный гласный звук?",
+"options": ["звОнит", "звонИт", "звонит", "звонИть"],
+"correctAnswers": ["звонИт"]`;
 
       try {
         const r2 = await callGPT(
