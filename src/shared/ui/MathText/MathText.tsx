@@ -14,6 +14,10 @@ function looksLikeMath(text: string): boolean {
     || /\b(log|ln|sin|cos|tan|int|frac|sqrt|sum|lim)\b/.test(text);
 }
 
+function hasCyrillic(s: string): boolean {
+  return /[\u0400-\u04FF]/.test(s);
+}
+
 function renderKatex(latex: string): string {
   try {
     return katex.renderToString(normalizeLatex(latex), { throwOnError: false });
@@ -30,7 +34,14 @@ function removeStrayDollars(s: string): string {
   return s.slice(0, idx) + s.slice(idx + 1);
 }
 
-/** Оборачивает "голый" LaTeX в $...$ внутри одного не-долларового куска. */
+/** Есть ли в куске что-то "математическое" — LaTeX-команда, ^, _ или math-функция. */
+function hasMathMarkers(text: string): boolean {
+  return /\\[a-zA-Z]+/.test(text)
+      || /\b(sin|cos|tan|log|ln|sqrt|abs|lim)\s*\(/.test(text)
+      || /[_^]/.test(text);  // ← добавлено: x^2, x_1 и т.п.
+}
+
+/** Оборачивает "голую" математику в $...$ внутри одного не-долларового куска. */
 function wrapBareInSegment(seg: string): string {
   const parts: string[] = [];
   let lastIdx = 0;
@@ -45,9 +56,9 @@ function wrapBareInSegment(seg: string): string {
   parts.push(seg.slice(lastIdx));
 
   return parts.map(p => {
-    if (/[\u0400-\u04FF]/.test(p)) return p;              // кириллица — не трогаем
-    if (!p.trim()) return p;                               // пробелы — не трогаем
-    if (!/\\[a-zA-Z]+/.test(p) && !/\b(sin|cos|tan|log|ln|sqrt|abs|lim)\s*\(/.test(p)) return p;
+    if (hasCyrillic(p)) return p;            // кириллица — не трогаем
+    if (!p.trim()) return p;                 // пробелы — не трогаем
+    if (!hasMathMarkers(p)) return p;
 
     const lead = p.match(/^\s*/)![0];
     const trail = p.match(/\s*$/)![0];
@@ -56,11 +67,10 @@ function wrapBareInSegment(seg: string): string {
   }).join('');
 }
 
-/** Главная функция: сначала режем по $...$, потом внутри каждого куска — по кириллице. */
+/** Сначала режем по $...$, потом внутри каждого куска — по кириллице. */
 function autoWrapLatexBare(s: string): string {
   const dollarParts = s.split(/(\$[^$]+\$)/g);
   return dollarParts.map(p => {
-    // Уже обёрнуто — не трогаем
     if (p.startsWith('$') && p.endsWith('$') && p.length > 2) return p;
     return wrapBareInSegment(p);
   }).join('');
@@ -81,7 +91,7 @@ export const MathText: React.FC<MathTextProps> = ({ text, className = '' }) => {
   // 3. Убираем непарные $
   str = removeStrayDollars(str);
 
-  // 4. Авто-обёртка голого LaTeX
+  // 4. Авто-обёртка голой математики
   str = autoWrapLatexBare(str);
 
   // 5. Рендер
@@ -102,7 +112,8 @@ export const MathText: React.FC<MathTextProps> = ({ text, className = '' }) => {
     );
   }
 
-  if (looksLikeMath(str)) {
+  // 🆕 ГЛАВНАЯ ЗАЩИТА: если есть кириллица — не отдаём всю строку в KaTeX
+  if (looksLikeMath(str) && !hasCyrillic(str)) {
     return (
       <span
         className={className}

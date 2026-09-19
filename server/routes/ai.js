@@ -275,12 +275,8 @@ function normalizeSubSup(text) {
   return s;
 }
 
-// ============================================================
-// Нормализация формата ударения
-// ============================================================
 function normalizeStressFormat(testData) {
   if (!testData?.questions) return testData;
-
   testData.questions = testData.questions.map(q => {
     if (q.type !== 'single' && q.type !== 'multiple') return q;
     const qText = String(q.questionText || '').toLowerCase();
@@ -289,50 +285,24 @@ function normalizeStressFormat(testData) {
 
     const fixOpt = (opt) => {
       let s = String(opt || '').trim();
-
-      // 1. **Х** → Х (markdown bold вокруг буквы)
       s = s.replace(/\*\*([а-яёa-z])\*\*/gi, (_, letter) => letter.toUpperCase());
-
-      // 2. *Х* → Х (markdown italic)
       s = s.replace(/\*([а-яёa-z])\*/gi, (_, letter) => letter.toUpperCase());
-
-      // 3. __Х__ → Х
       s = s.replace(/__([а-яёa-z])__/gi, (_, letter) => letter.toUpperCase());
-
-      // 4. _Х_ → Х (одиночные подчёркивания)
       s = s.replace(/_([а-яё])_/gi, (_, letter) => letter.toUpperCase());
-
-      // 5. `Х` → Х (backticks)
       s = s.replace(/`([а-яёa-z])`/gi, (_, letter) => letter.toUpperCase());
-
-      // 6. Х́ (буква с комбинирующим акутом U+0301) → Х заглавная
       s = s.replace(/([а-яёa-z])\u0301/gi, (_, letter) => letter.toUpperCase());
-
-      // 7. 'Х (апостроф перед буквой) → Х заглавная
       s = s.replace(/'([а-яёa-z])/gi, (_, letter) => letter.toUpperCase());
-
-      // 8. Если заглавных вообще нет — ищем подсказки
-      const hasUpper = /[А-ЯЁ]/.test(s);
-      if (!hasUpper) {
-        // "ударение на X" уже в вопросе — не наш случай
-        // оставляем как есть
-      }
-
-      // 9. Убираем остатки звёздочек и подчёркиваний
       s = s.replace(/\*+/g, '');
       s = s.replace(/_+/g, '');
       s = s.replace(/`/g, '');
       s = s.replace(/[()]/g, '').trim();
-
       return s;
     };
 
     q.options = (q.options || []).map(fixOpt);
     q.correctAnswers = (q.correctAnswers || []).map(fixOpt);
-
     return q;
   });
-
   return testData;
 }
 
@@ -512,7 +482,6 @@ function validateTestData(testData, isMath, isRussian = false) {
           critical.push(`Q${idx + 1}: ссылка на визуальное выделение — в UI его нет.`);
         }
 
-        // 🆕 Плохая формулировка "ударение на N-й слог" — AI постоянно ошибается
         if (/ударени[ея]\s+на\s+(перв|втор|трет|четв|пят|шест|седьм|восьм|девят|десят|последн)/i.test(qLower)) {
           critical.push(`Q${idx + 1}: формулировка "ударение на N-й слог" ненадёжна — используйте "В каком слове верно выделена буква, обозначающая ударный гласный звук?".`);
         }
@@ -540,7 +509,6 @@ function validateTestData(testData, isMath, isRussian = false) {
           const opts = q.options || [];
           const badFormat = opts.some(o => {
             const s = String(o || '');
-            // 🆕 остались звёздочки/подчёркивания → не убрались
             if (/\*|_|`/.test(s)) return true;
             const upperCount = (s.match(/[А-ЯЁ]/g) || []).length;
             return upperCount !== 1;
@@ -650,6 +618,33 @@ function validateTestData(testData, isMath, isRussian = false) {
       }
     }
 
+    // 🆕 Если ВСЕ expected уже присутствуют в тексте задачи как отдельные числа —
+    //    ученик просто копирует, а не решает.
+    if (isMath && phs.length > 0 && q.questionText) {
+      const qText = String(q.questionText);
+      const allValuesInText = phs.every(ph => {
+        const exp = String(ph.expected || '').trim();
+        if (!exp) return false;
+        const escaped = exp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(^|[^0-9a-zA-Z.])${escaped}([^0-9a-zA-Z.]|$)`).test(qText);
+      });
+      if (allValuesInText) {
+        critical.push(`Q${idx + 1}: все значения для плейсхолдеров уже есть в тексте задачи — ученик просто копирует, а не решает.`);
+      }
+    }
+
+    // 🆕 Если плейсхолдер один и его expected встречается в тексте — точно копирование
+    if (isMath && phs.length === 1 && q.questionText) {
+      const exp = String(phs[0].expected || '').trim();
+      if (exp) {
+        const escaped = exp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`(^|[^0-9a-zA-Z.])${escaped}([^0-9a-zA-Z.]|$)`);
+        if (re.test(String(q.questionText))) {
+          critical.push(`Q${idx + 1}: единственный плейсхолдер уже заполнен значением из текста — задача бессмысленна.`);
+        }
+      }
+    }
+
     if (isMath && q.template && q.questionText) {
       const expectedValues = phs.map(p => String(p.expected).trim()).filter(v => v.length > 0 && v.length < 10);
       if (expectedValues.length >= 2) {
@@ -671,6 +666,62 @@ function validateTestData(testData, isMath, isRussian = false) {
   });
 
   return { critical, cosmetic };
+}
+
+// ============================================================
+// TOP-UP: добираем недостающие вопросы после дедупликации
+// ============================================================
+async function topUpToCount({
+  testData, requestedCount, systemMessage, userPrompt,
+  API_KEY, FOLDER_ID, processResponse, totalUsage, maxAttempts = 3,
+}) {
+  let attempt = 0;
+  while (testData.questions.length < requestedCount && attempt < maxAttempts) {
+    const missing = requestedCount - testData.questions.length;
+    const existingTexts = testData.questions
+      .map(q => String(q.questionText || '').trim().slice(0, 140))
+      .filter(Boolean);
+
+    const topUpPrompt = `${userPrompt}
+
+⚠️ У ТЕБЯ УЖЕ ЕСТЬ ${existingTexts.length} ВОПРОСОВ:
+${existingTexts.map(t => '— ' + t).join('\n')}
+
+🔴 Сгенерируй РОВНО ${missing} НОВЫХ вопросов, КОТОРЫХ НЕТ в списке выше.
+   - Другие темы, другие формулировки, другие числа.
+   - НЕ повторяй ни одну строку из списка выше.
+   - В массиве "questions" верни РОВНО ${missing} элементов.
+   - Формат — тот же.`;
+
+    try {
+      const r = await callGPT(
+        [{ role: 'system', text: systemMessage }, { role: 'user', text: topUpPrompt }],
+        API_KEY, FOLDER_ID, 6000, 0.8
+      );
+      totalUsage.inputTokens += r.usage.inputTokens;
+      totalUsage.completionTokens += r.usage.completionTokens;
+      totalUsage.totalTokens += r.usage.totalTokens;
+
+      console.log(`--- Top-up #${attempt + 1} (нужно ${missing}, есть ${testData.questions.length}) ---`);
+      console.log(r.text);
+
+      const extra = processResponse(r.text);
+      const before = testData.questions.length;
+      testData.questions = [...testData.questions, ...(extra.questions || [])];
+      testData = deduplicateQuestions(testData);
+
+      if (testData.questions.length === before) {
+        console.warn('⚠️  Top-up не добавил новых вопросов — прерываю');
+        break;
+      }
+      console.log(`✅ Top-up: ${before} → ${testData.questions.length} (цель ${requestedCount})`);
+    } catch (e) {
+      console.warn('Top-up error:', e.message);
+      break;
+    }
+    attempt++;
+  }
+  return testData;
 }
 
 // ============================================================
@@ -725,8 +776,15 @@ async function verifyGroup(questions, API_KEY, FOLDER_ID, isMath, isRussian = fa
     return `[${idx + 1}] ${q.questionText}\n${opts}\n→ ${kind}`;
   }).join('\n\n');
 
-  const prompt = `Реши пошагово. Не доверяй вариантам — считай сам.
-Верни JSON: [{"n":1,"answers":[номер]}, ...]. Пустой массив = ни один вариант не подходит.
+  const prompt = `Реши КАЖДОЕ задание САМ, шаг за шагом. Не доверяй вариантам.
+
+🔴 ВАЖНО для выбора ответов:
+1. Проверь ВСЕ варианты по очереди, а не только первый подходящий.
+2. Если для single-вопроса ПРАВИЛЬНЫХ несколько (например, x²−9=0 имеет корни 3 И −3) — верни ВСЕ правильные номера.
+3. Если указан тип "single", но правильных ответов 2+, значит составитель ошибся — верни все правильные.
+4. Пустой массив [] = ни один вариант не подходит.
+
+Верни JSON: [{"n":1,"answers":[номер1, номер2, ...]}, ...]
 
 ${lines}`;
 
@@ -851,8 +909,6 @@ function buildRussianSystemMessage() {
   - "Укажите слово с ударением на второй слог"
   - "Укажите слово, в котором ударение падает на..."
   - любые формулировки с указанием НОМЕРА слога
-  
-Причина: AI путает слоги и порождает 4 слова, среди которых НЕТ правильного. Такие задания нерешаемы.
 
 ✅ Разрешена ТОЛЬКО формулировка:
   "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
@@ -865,23 +921,16 @@ function buildRussianSystemMessage() {
 ✅ ПРАВИЛЬНО:
   "options": ["алфАвит", "алфавИт", "Алфавит", "алфавитА"]
   "correctAnswers": ["алфавИт"]
-  (Ударение в слове "алфавит" — на последний слог "и".)
 
 ❌ НЕПРАВИЛЬНО:
   "options": ["звон**И**т", "газопров**О**д", "обл**Е**гчить", "догов**О**р"]
-  ↑ Здесь звёздочки и все варианты с правильным ударением — нет ошибок.
-  
-❌ НЕПРАВИЛЬНО (плохая формулировка):
-  "questionText": "Укажите слово с ударением на первый слог"
-  "options": ["звонИт", "газопровОд", "облегчИть", "договОр"]
-  ↑ Ни одно из этих слов не имеет ударения на первый слог. Задание нерешаемо.
 
 🔴 СПИСОК слов для ударений (только эти, в них ударение однозначно):
 алфавИт, дефИс, квартАл, цемЕнт, ходАтайство, избалОванный, дОсуг,
 каталОг, нАчал, партЕр, портфЕль, свЁкла, срЕдства, тОрты, цепОчка,
-шофЁр, щавЕль, экспЕрт, звонИт, облегчИть, договОр, красИвее, звонИшь
+шофЁр, щавЕль, экспЕрт, звонИт, облегчИть, договОр, красИвее, позвонИшь
 
-🚫 ЗАПРЕЩЕНЫ (спорные): творог, щавель, звонит (в прошлом), каталог (устар.), свёкла, красивее.
+🚫 ЗАПРЕЩЕНЫ (спорные): творог, щавель, звонит, каталог (устар.), свёкла, красивее.
 
 🔴 ОБЩИЕ ЗАПРЕТЫ (нарушение = перегенерация):
 1. 🚫 НЕ ссылайся на визуальное выделение: "выделенное слово", "подчёркнутое".
@@ -889,6 +938,7 @@ function buildRussianSystemMessage() {
 3. 🚫 НЕ выдумывай несуществующие слова.
 4. Для single — РОВНО ОДИН правильный ответ.
 5. Для multiple — 2–4 правильных ответа.
+6. 🚫 ВСЕ вопросы должны быть РАЗНЫМИ по формулировке и содержанию. НЕ повторяй одну и ту же формулировку с разными словами!
 
 🔴 ФОРМАТ ОТВЕТОВ:
 - УДАРЕНИЕ: слово с ОДНОЙ заглавной буквой (алфавИт), БЕЗ подчёркиваний и звёздочек!
@@ -904,8 +954,13 @@ function buildRussianUserPrompt({ topic, finalCount, examBlock, seed, recentList
 
 ${recentList ? `НЕ повторяй: ${recentList}\n` : ''}${examBlock}
 
-Сгенерируй ${finalCount} вопросов по русскому.
+Сгенерируй РОВНО ${finalCount} вопросов по русскому.
 Типы: ТОЛЬКО single и multiple.
+
+🔴 КАЖДЫЙ ВОПРОС ДОЛЖЕН БЫТЬ УНИКАЛЬНЫМ:
+- Разные формулировки вопроса.
+- Разные слова / предложения / контексты.
+- НЕ повторяй один и тот же шаблон с разными данными.
 
 ОБЩИЕ ПРАВИЛА:
 - НЕ ссылайся на "выделенное слово".
@@ -920,30 +975,16 @@ ${recentList ? `НЕ повторяй: ${recentList}\n` : ''}${examBlock}
 🔴 ФОРМУЛИРОВКА ВОПРОСА — ТОЛЬКО ТАКАЯ:
   "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
 
-🚫 НЕ пиши "Укажите слово с ударением на первый/второй/третий слог". Так делать ЗАПРЕЩЕНО.
-
 🔴 ФОРМАТ ОТВЕТОВ:
-- Слово с ОДНОЙ заглавной буквой (та, на которую падает ударение).
-- БЕЗ звёздочек (**), БЕЗ подчёркиваний (_), БЕЗ кавычек, БЕЗ бэктиков.
+- Слово с ОДНОЙ заглавной буквой.
+- БЕЗ звёздочек (**), БЕЗ подчёркиваний (_), БЕЗ кавычек.
 - 3 варианта с НЕПРАВИЛЬНЫМ ударением + 1 с ПРАВИЛЬНЫМ.
 
-✅ ХОРОШО:
-"questionText": "В каком слове верно выделена буква, обозначающая ударный гласный звук?",
-"options": ["алфАвит", "алфавИт", "Алфавит", "алфавитА"],
-"correctAnswers": ["алфавИт"]
-
-❌ ПЛОХО (звёздочки, все варианты правильные):
-"options": ["звон**И**т", "газопров**О**д", "обл**Е**гчить", "догов**О**р"]
-
-❌ ПЛОХО (формулировка про слог):
-"questionText": "Укажите слово с ударением на первый слог"
-
+🔴 Используй РАЗНЫЕ слова в каждом вопросе. Не повторяй одно слово дважды.
 🔴 ДОСТУПНЫЕ СЛОВА (используй ТОЛЬКО их):
 алфавИт, дефИс, квартАл, цемЕнт, ходАтайство, избалОванный, дОсуг,
 каталОг, нАчал, партЕр, портфЕль, свЁкла, срЕдства, тОрты, цепОчка,
-шофЁр, щавЕл, экспЕрт, звонИт, облегчИть, договОр, красИвее, позвонИшь
-
-🚫 ЗАПРЕЩЕНЫ (спорные): творог, щавель, звонит, красивее (есть спорные варианты).
+шофЁр, щавЕль, экспЕрт, звонИт, облегчИть, договОр, красИвее, позвонИшь
 
 ПРИМЕР:
 "questionText": "В каком слове верно выделена буква, обозначающая ударный гласный звук?",
@@ -1049,7 +1090,8 @@ ${recentList ? `НЕ повторяй: ${recentList}\n` : ''}${examBlock}
     generic: `ТИП ЗАДАНИЯ: ОБЩИЙ
 
 Составь задания по теме, используя ТОЛЬКО single и multiple.
-Формулировки точные. Все варианты правдоподобные.`,
+Формулировки точные. Все варианты правдоподобные.
+Каждый вопрос — на свою подтему.`,
   };
 
   return `${commonHeader}
@@ -1087,6 +1129,7 @@ PYTHON:
 1. В template ОБЯЗАТЕЛЬНО должны быть маркеры {{<id>}} для КАЖДОГО плейсхолдера.
 2. В каждом placeholder поле "expected" ОБЯЗАТЕЛЬНО.
 3. В КАЖДОМ availableItem поле "content" ОБЯЗАТЕЛЬНО — без пустых.
+4. 🚫 ВСЕ вопросы должны быть РАЗНЫМИ. Не повторяй одну и ту же формулировку.
 
 options — короткие. Все expected/options/content — СТРОКИ.`;
   }
@@ -1101,7 +1144,7 @@ options — короткие. Все expected/options/content — СТРОКИ.`
 Поэтому:
 1. В questionText — ТОЛЬКО задача с ЧИСЛОВЫМИ данными. БЕЗ формулы-ответа!
 2. В template — ТОЛЬКО формула-ответ с @@плейсхолдерами@@ вместо значений.
-3. В placeholders[].expected — ЧИСЛО или ВЫРАЖЕНИЕ, которое должно стоять на месте этого плейсхолдера.
+3. В placeholders[].expected — ЧИСЛО, которое должно стоять на месте этого плейсхолдера.
 4. В availableItems[].content — элементы для перетаскивания: ПРАВИЛЬНЫЕ + НЕВЕРНЫЕ (дистракторы).
 
 📛 СТРОГО ЗАПРЕЩЕНО:
@@ -1111,19 +1154,16 @@ options — короткие. Все expected/options/content — СТРОКИ.`
 - Оставлять пустые availableItems.
 - Подставлять значения в template вместо @@плейсхолдеров@@.
 
-✅ ПРАВИЛЬНАЯ структура (пример — площадь треугольника по Герону, стороны 3, 4, 5):
+✅ ПРАВИЛЬНАЯ структура (пример):
 
 "questionText": "Найдите площадь треугольника со сторонами 3, 4 и 5 по формуле Герона. Ответ округлите до целого.",
-
 "template": "$S = \\sqrt{@@p@@(@@p@@ - @@a@@)(@@p@@ - @@b@@)(@@p@@ - @@c@@)}$",
-
 "placeholders": [
   { "id": "a", "expectedType": "number", "expected": "3" },
   { "id": "b", "expectedType": "number", "expected": "4" },
   { "id": "c", "expectedType": "number", "expected": "5" },
   { "id": "p", "expectedType": "number", "expected": "6" }
 ],
-
 "availableItems": [
   { "id": "i1", "content": "3", "category": "number" },
   { "id": "i2", "content": "4", "category": "number" },
@@ -1133,21 +1173,21 @@ options — короткие. Все expected/options/content — СТРОКИ.`
   { "id": "i6", "content": "12", "category": "number" }
 ]
 
-❌ ТАК ДЕЛАТЬ НЕЛЬЗЯ (ошибка, за которую перегенерируем):
-
-"questionText": "Найдите площадь треугольника со сторонами a, b и c, используя формулу Герона: S = \\sqrt{p(p-a)(p-b)(p-c)}",
-"template": "$S = \\sqrt{@@p@@(@@p@@ - @@a@@)...}$",
-"placeholders": [{"id":"a","expected":"a"}, {"id":"b","expected":"b"}, ...],
-"availableItems": [{"content":"a"}, {"content":"b"}, ...]
-
-↑ Здесь в questionText уже есть формула-ответ, а в expected — буквы вместо чисел. Это брак.
-
 🔴 ДРУГИЕ ПРАВИЛА:
 - expectedType/category: number, symbol, function, variable, operator.
 - id: буквенные (a, b, ans, x1). НЕ "1", НЕ "id".
 - КАЖДУЮ формулу оборачивай в ОДИНАРНЫЕ $...$ (НЕ $$...$$).
 - Слэши удваивай.
+- 🚫 ВСЕ вопросы ДОЛЖНЫ БЫТЬ РАЗНЫМИ. Не повторяй одну и ту же формулировку с разными числами.
 - correctAnswers пересчитай дважды.
+- 🆕 Для вопроса-уравнения с несколькими корнями (x²−9=0, x²=x, |x|=2 и т.п.)
+  используй тип "multiple", а НЕ "single".
+- 🆕 Для single-вопросов сформулируй так, чтобы правильный ответ был РОВНО ОДИН.
+  Если у задачи может быть >1 правильного ответа — переходи на "multiple".
+- 🆕 Для expressionBuilder: в тексте задачи должны быть ЧИСЛА, а в плейсхолдерах —
+  ЗНАЧЕНИЯ, требующие ВЫЧИСЛЕНИЯ (промежуточные результаты), а не копирования.
+  ❌ Плохо: "Найдите объём куба с ребром 4" → template="V = @@a@@^3", expected="4" — 4 уже есть в тексте.
+  ✅ Хорошо: "Найдите объём куба с ребром 4" → template="V = @@V@@", expected="64" — 64 надо вычислить.
 
 ФОРМАТ:
 
@@ -1170,14 +1210,22 @@ function buildUserPrompt({ topic, subjectField, subjectName, isMath, finalCount,
 
 ${recentList ? `НЕ повторяй: ${recentList}\n` : ''}${examBlock}
 
-${finalCount} вопросов по ${subjectName}.
+Сгенерируй РОВНО ${finalCount} вопросов по ${subjectName}.
 Типы: expressionBuilder ≥1, single ≥1, multiple ≥1.
+
+🔴 КАЖДЫЙ ВОПРОС ДОЛЖЕН БЫТЬ УНИКАЛЬНЫМ.
+- Разные формулировки, разные числа, разные подтемы.
+- НЕ повторяй один и тот же шаблон с разными числами.
 
 ${isMath ? `
 🔴 КРИТИЧНО ДЛЯ expressionBuilder:
 - questionText: ТОЛЬКО задача с конкретными ЧИСЛАМИ (3, 4, 5). НЕ пиши формулу-ответ в тексте!
 - template: формула-ОТВЕТ с @@плейсхолдерами@@ вместо значений.
-- placeholders[].expected: ЧИСЛА (3, 4, 5, 6), НЕ буквы!
+- placeholders[].expected: значения, требующие ВЫЧИСЛЕНИЯ, а не копирования из текста!
+
+❌ Плохо: "Найдите объём куба с ребром 4" → template="V = @@a@@^3", expected="4"
+✅ Хорошо: "Найдите объём куба с ребром 4" → template="V = @@V@@", expected="64"
+
 - availableItems[].content: числа и операторы (правильные + дистракторы).
 
 Если expected содержит буквы a, b, c, x — это ОШИБКА. Заменяй на числа.
@@ -1295,6 +1343,16 @@ router.post('/generate-test', async (req, res) => {
     console.log(r1.text);
 
     testData = processResponse(r1.text);
+
+    // ДОБОР: если после дедупликации вопросов меньше заказанного — добираем
+    if (testData.questions.length < finalCount) {
+      console.warn(`⚠️  После дедупликации ${testData.questions.length}/${finalCount}, запускаю top-up`);
+      testData = await topUpToCount({
+        testData, requestedCount: finalCount, systemMessage, userPrompt,
+        API_KEY, FOLDER_ID, processResponse, totalUsage,
+      });
+    }
+
     let { critical, cosmetic } = validateTestData(testData, isMath, isRussian);
 
     if (cosmetic.length > 0) console.log('ℹ️  Косметика:', cosmetic);
@@ -1320,6 +1378,9 @@ router.post('/generate-test', async (req, res) => {
 ${critical.map(i => '- ' + i).join('\n')}
 
 🔴 ИСПРАВЬ и верни снова JSON.
+⚠️ Количество вопросов должно быть РОВНО ${finalCount}. НЕ сокращай!
+   Если не можешь решить какую-то тему — замени её на другую, но оставь ${finalCount} вопросов.
+   Все вопросы должны быть РАЗНЫМИ.
 
 ДЛЯ УДАРЕНИЙ:
 - Формулировка ТОЛЬКО "В каком слове верно выделена буква, обозначающая ударный гласный звук?"
@@ -1330,12 +1391,14 @@ ${critical.map(i => '- ' + i).join('\n')}
 ДЛЯ expressionBuilder (математика):
 - questionText: ТОЛЬКО задача с конкретными ЧИСЛАМИ.
 - template: формула-ОТВЕТ с @@плейсхолдерами@@.
-- placeholders[].expected: ЧИСЛА, НЕ буквы!
+- placeholders[].expected: значения, требующие ВЫЧИСЛЕНИЯ (промежуточный результат или ответ), а НЕ числа из условия!
 
-Пример для ударений:
-"questionText": "В каком слове верно выделена буква, обозначающая ударный гласный звук?",
-"options": ["звОнит", "звонИт", "звонит", "звонИть"],
-"correctAnswers": ["звонИт"]`;
+❌ Плохо: "Найдите объём куба с ребром 4" → template="V = @@a@@^3", expected="4"
+✅ Хорошо: "Найдите объём куба с ребром 4" → template="V = @@V@@", expected="64"
+
+ДЛЯ single/multiple (математика):
+- Если уравнение имеет несколько корней (x²−9=0 → 3 и −3) — используй "multiple".
+- Для "single" правильный ответ должен быть РОВНО ОДИН.`;
 
       try {
         const r2 = await callGPT(
@@ -1349,7 +1412,17 @@ ${critical.map(i => '- ' + i).join('\n')}
         console.log('--- Attempt 2 ---');
         console.log(r2.text);
 
-        const testData2 = processResponse(r2.text);
+        let testData2 = processResponse(r2.text);
+
+        // ДОБОР и для второй попытки
+        if (testData2.questions.length < finalCount) {
+          console.warn(`⚠️  [Attempt 2] После дедупликации ${testData2.questions.length}/${finalCount}, запускаю top-up`);
+          testData2 = await topUpToCount({
+            testData: testData2, requestedCount: finalCount, systemMessage, userPrompt,
+            API_KEY, FOLDER_ID, processResponse, totalUsage,
+          });
+        }
+
         const v2 = validateTestData(testData2, isMath, isRussian);
         const critical2 = [...v2.critical];
 
@@ -1363,7 +1436,9 @@ ${critical.map(i => '- ' + i).join('\n')}
           critical2.push(`Q${verify2.invalidIndices.map(i => i + 1).join(', ')} — неверные.`);
         }
 
-        if (critical2.length <= savedFirstCritical.length) {
+        // Сравниваем: выбираем вариант с меньшим числом critical + большим числом вопросов
+        const score = (td, crit) => crit.length * 1000 - td.questions.length;
+        if (score(testData2, critical2) <= score(savedFirst, savedFirstCritical)) {
           testData = testData2;
           critical = critical2;
         } else {
