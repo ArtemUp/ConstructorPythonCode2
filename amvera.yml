@@ -10,4 +10,5 @@ build:
 
 run:
   # Запускаем наш сервер, который раздаёт API и статику
+  containerPort: 3001
   scriptName: server/index.js
