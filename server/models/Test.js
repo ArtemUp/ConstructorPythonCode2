@@ -1,15 +1,15 @@
 const mongoose = require('mongoose');
 
 const placeholderSchema = new mongoose.Schema({
-  id: { type: String, required: true },
-  expectedType: { type: String, required: true },
-  expected: { type: String, required: true },
+  id: { type: String }, // Убрали required
+  expectedType: { type: String }, // Убрали required
+  expected: { type: String, default: '' }, // Убрали required, добавили default
 });
 
 const itemSchema = new mongoose.Schema({
-  id: { type: String, required: true },
-  content: { type: String, required: true },
-  category: { type: String, required: true },
+  id: { type: String }, // Убрали required
+  content: { type: String, default: '' }, // Убрали required, добавили default
+  category: { type: String }, // Убрали required
 });
 
 const questionSchema = new mongoose.Schema({
